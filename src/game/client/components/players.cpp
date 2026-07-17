@@ -834,6 +834,23 @@ void CPlayers::RenderPlayer(
 		RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, ShadowPosition, g_Config.m_ClUnpredictedShadowAlpha / 100.f); // render ghost
 	}
 
+	// ec_outline: a cheap outline effect (no shaders needed) - draw the tee a few extra
+	// times, offset in a ring around the real position, using a solid outline color
+	if(g_Config.m_EcOutline && Local)
+	{
+		CTeeRenderInfo OutlineInfo = RenderInfo;
+		OutlineInfo.m_CustomColoredSkin = true;
+		const ColorRGBA OutlineColor = color_cast<ColorRGBA>(ColorHSLA(g_Config.m_EcOutlineColor)).WithAlpha(Alpha);
+		OutlineInfo.m_ColorBody = OutlineColor;
+		OutlineInfo.m_ColorFeet = OutlineColor;
+		const float OutlineWidth = 1.5f;
+		static const vec2 s_aOutlineOffsets[8] = {
+			vec2(1.0f, 0.0f), vec2(-1.0f, 0.0f), vec2(0.0f, 1.0f), vec2(0.0f, -1.0f),
+			vec2(0.7071f, 0.7071f), vec2(-0.7071f, 0.7071f), vec2(0.7071f, -0.7071f), vec2(-0.7071f, -0.7071f)};
+		for(const vec2 &Offset : s_aOutlineOffsets)
+			RenderTools()->RenderTee(&State, &OutlineInfo, Player.m_Emote, Direction, Position + Offset * OutlineWidth, Alpha);
+	}
+
 	RenderTools()->RenderTee(&State, &RenderInfo, Player.m_Emote, Direction, Position, Alpha);
 
 	float TeeAnimScale, TeeBaseSize;

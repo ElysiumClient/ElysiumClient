@@ -40,6 +40,12 @@ public:
 	int m_aInputDirectionRight[NUM_DUMMIES];
 	int m_aShowHookColl[NUM_DUMMIES];
 
+	// ec_fast_input: latest (possibly unconfirmed) input snapshot, used to predict a few
+	// extra ticks ahead of the regular boundary. Only tracks the local dummy slot.
+	CNetObj_PlayerInput m_FastInput = {};
+	bool m_FastInputHookAction = false;
+	bool m_FastInputFireAction = false;
+
 	CControls();
 	int Sizeof() const override { return sizeof(*this); }
 
@@ -53,6 +59,7 @@ public:
 	int SnapInput(int *pData);
 	void ClampMousePos();
 	void ResetInput(int Dummy);
+	bool CheckNewInput();
 
 private:
 	static void ConKeyInputState(IConsole::IResult *pResult, void *pUserData);

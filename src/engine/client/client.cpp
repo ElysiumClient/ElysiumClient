@@ -2898,6 +2898,28 @@ void CClient::Update()
 					// send input
 					SendInput();
 				}
+
+				// ec_fast_input: repredict immediately when the input changes, instead of
+				// waiting for the next confirmed tick boundary. All modes trigger on the
+				// same discrete input changes (CheckNewInput handles the mode-specific aim
+				// handling internally) - "Numb Input" additionally throttles how often that's
+				// allowed to fire, for a calmer, less reactive feel.
+				if(g_Config.m_EcFastInput)
+				{
+					const bool InputChanged = GameClient()->CheckNewInput();
+					if(g_Config.m_EcFastInputMode == 2)
+					{
+						if(InputChanged && time_get() > m_LastFastInputRepredictTime + time_freq() * g_Config.m_EcFastInputThrottleMs / 1000)
+						{
+							Repredict = true;
+							m_LastFastInputRepredictTime = time_get();
+						}
+					}
+					else if(InputChanged)
+					{
+						Repredict = true;
+					}
+				}
 			}
 
 			// only do sane predictions

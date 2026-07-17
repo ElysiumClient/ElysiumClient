@@ -269,7 +269,14 @@ bool CChat::OnInput(const IInput::CEvent &Event)
 			m_ServerCommandsNeedSorting = false;
 		}
 
-		SendChatQueued(m_Input.GetString());
+		{
+			const char *pMessage = m_Input.GetString();
+			// Don't translate server commands (e.g. "/w name msg"), translating would break their syntax
+			if(g_Config.m_EcTranslateOutgoing && pMessage[0] != '\0' && pMessage[0] != '/')
+				GameClient()->m_Translate.TranslateOutgoing(m_Mode == MODE_TEAM ? 1 : 0, pMessage);
+			else
+				SendChatQueued(pMessage);
+		}
 		m_pHistoryEntry = nullptr;
 		DisableMode();
 		GameClient()->OnRelease();
@@ -917,6 +924,8 @@ void CChat::AddLine(int ClientId, int Team, const char *pLine)
 			}
 		}
 	}
+
+	GameClient()->m_Translate.AutoTranslate(CurrentLine);
 }
 
 void CChat::OnPrepareLines(float y)
@@ -993,6 +1002,21 @@ void CChat::OnPrepareLines(float y)
 			}
 		}
 
+		const char *pTranslatedError = nullptr;
+		const char *pTranslatedText = nullptr;
+		const char *pTranslatedLanguage = nullptr;
+		if(Line.m_pTranslateResponse != nullptr && Line.m_pTranslateResponse->m_Text[0])
+		{
+			if(Line.m_pTranslateResponse->m_Error)
+				pTranslatedError = Line.m_pTranslateResponse->m_Text;
+			else
+			{
+				pTranslatedText = Line.m_pTranslateResponse->m_Text;
+				if(Line.m_pTranslateResponse->m_Language[0] != '\0')
+					pTranslatedLanguage = Line.m_pTranslateResponse->m_Language;
+			}
+		}
+
 		// get the y offset (calculate it if we haven't done that yet)
 		if(Line.m_aYOffset[OffsetType] < 0.0f)
 		{
@@ -1030,7 +1054,32 @@ void CChat::OnPrepareLines(float y)
 				AppendCursor.m_LineWidth -= MeasureCursor.m_LongestLineWidth;
 			}
 
-			TextRender()->TextEx(&AppendCursor, pText);
+			if(pTranslatedText)
+			{
+				TextRender()->TextEx(&AppendCursor, pTranslatedText);
+				if(pTranslatedLanguage)
+				{
+					TextRender()->TextEx(&AppendCursor, " [");
+					TextRender()->TextEx(&AppendCursor, pTranslatedLanguage);
+					TextRender()->TextEx(&AppendCursor, "]");
+				}
+				TextRender()->TextEx(&AppendCursor, "\n");
+				AppendCursor.m_FontSize *= 0.8f;
+				TextRender()->TextEx(&AppendCursor, pText);
+				AppendCursor.m_FontSize /= 0.8f;
+			}
+			else if(pTranslatedError)
+			{
+				TextRender()->TextEx(&AppendCursor, pText);
+				TextRender()->TextEx(&AppendCursor, "\n");
+				AppendCursor.m_FontSize *= 0.8f;
+				TextRender()->TextEx(&AppendCursor, pTranslatedError);
+				AppendCursor.m_FontSize /= 0.8f;
+			}
+			else
+			{
+				TextRender()->TextEx(&AppendCursor, pText);
+			}
 
 			Line.m_aYOffset[OffsetType] = AppendCursor.Height() + RealMsgPaddingY;
 		}
@@ -1125,7 +1174,49 @@ void CChat::OnPrepareLines(float y)
 			AppendCursor.m_LineWidth -= LineCursor.m_LongestLineWidth;
 		}
 
-		TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pText);
+		if(pTranslatedText)
+		{
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pTranslatedText);
+			if(pTranslatedLanguage)
+			{
+				ColorRGBA ColorLang = Color;
+				ColorLang.r *= 0.8f;
+				ColorLang.g *= 0.8f;
+				ColorLang.b *= 0.8f;
+				TextRender()->TextColor(ColorLang);
+				TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, " [");
+				TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pTranslatedLanguage);
+				TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, "]");
+			}
+			ColorRGBA ColorSub = Color;
+			ColorSub.r *= 0.7f;
+			ColorSub.g *= 0.7f;
+			ColorSub.b *= 0.7f;
+			TextRender()->TextColor(ColorSub);
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, "\n");
+			AppendCursor.m_FontSize *= 0.8f;
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pText);
+			AppendCursor.m_FontSize /= 0.8f;
+			TextRender()->TextColor(Color);
+		}
+		else if(pTranslatedError)
+		{
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pText);
+			ColorRGBA ColorSub = Color;
+			ColorSub.r = 0.7f;
+			ColorSub.g = 0.6f;
+			ColorSub.b = 0.6f;
+			TextRender()->TextColor(ColorSub);
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, "\n");
+			AppendCursor.m_FontSize *= 0.8f;
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pTranslatedError);
+			AppendCursor.m_FontSize /= 0.8f;
+			TextRender()->TextColor(Color);
+		}
+		else
+		{
+			TextRender()->CreateOrAppendTextContainer(Line.m_TextContainerIndex, &AppendCursor, pText);
+		}
 
 		if(!g_Config.m_ClChatOld && (Line.m_aText[0] != '\0' || Line.m_aName[0] != '\0'))
 		{

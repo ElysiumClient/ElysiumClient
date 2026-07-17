@@ -685,6 +685,7 @@ public:
 		SETTINGS_SOUND,
 		SETTINGS_DDNET,
 		SETTINGS_ASSETS,
+		SETTINGS_ELYSIUM,
 
 		SETTINGS_LENGTH,
 	};
@@ -833,6 +834,11 @@ private:
 
 	// found in menus_settings.cpp
 	void RenderSettingsDDNet(CUIRect MainView);
+	void RenderSettingsElysium(CUIRect MainView);
+	void RenderSettingsElysiumVisual(CUIRect MainView);
+	void RenderSettingsElysiumInput(CUIRect MainView);
+	void RenderSettingsElysiumTranslate(CUIRect MainView);
+	void RenderSettingsElysiumMisc(CUIRect MainView);
 	void RenderSettingsAppearance(CUIRect MainView);
 	bool RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight);
 };

@@ -141,6 +141,8 @@ void CGameClient::OnConsoleInit()
 					      &m_Particles.m_RenderTrailExtra,
 					      &m_Items,
 					      &m_Ghost,
+					      &m_Rainbow, // must render before m_Players so the color override is ready in time
+					      &m_Translate, // doesn't render anything, just processes async translation jobs
 					      &m_Players,
 					      &m_MapLayersForeground,
 					      &m_Particles.m_RenderExplosions,
@@ -2674,8 +2676,17 @@ void CGameClient::OnPredict()
 		pDummyChar = m_PredictedWorld.GetCharacterById(m_aLocalIds[!g_Config.m_ClDummy]);
 
 	int PredictionTick = Client()->GetPredictionTick();
+
+	// ec_fast_input: predict a few extra ticks past the regular boundary using our
+	// latest unconfirmed input, so movement changes show up before the next real tick
+	int FastInputTicks = 0;
+	if(g_Config.m_EcFastInput)
+		FastInputTicks = (g_Config.m_EcFastInputAmount + 19) / 20;
+	const int FinalTickRegular = Client()->PredGameTick(g_Config.m_ClDummy);
+	const int FinalTick = FinalTickRegular + FastInputTicks;
+
 	// predict
-	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= Client()->PredGameTick(g_Config.m_ClDummy); Tick++)
+	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTick; Tick++)
 	{
 		// fetch the previous characters
 		if(Tick == PredictionTick)
@@ -2699,8 +2710,20 @@ void CGameClient::OnPredict()
 			pLocalChar->m_CanMoveInFreeze = true;
 
 		// apply inputs and tick
-		CNetObj_PlayerInput *pInputData = (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping);
-		CNetObj_PlayerInput *pDummyInputData = !pDummyChar ? nullptr : (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping ^ 1);
+		const bool FastInputTick = Tick > FinalTickRegular;
+		CNetObj_PlayerInput *pInputData;
+		CNetObj_PlayerInput *pDummyInputData = nullptr;
+		if(FastInputTick)
+		{
+			// Extra fast-input ticks: extrapolate using our latest unconfirmed input.
+			// The dummy isn't extrapolated here to keep this predictable.
+			pInputData = &m_Controls.m_FastInput;
+		}
+		else
+		{
+			pInputData = (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping);
+			pDummyInputData = !pDummyChar ? nullptr : (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping ^ 1);
+		}
 		bool DummyFirst = pInputData && pDummyInputData && pDummyChar->GetCid() < pLocalChar->GetCid();
 
 		if(DummyFirst)
@@ -2720,7 +2743,13 @@ void CGameClient::OnPredict()
 
 		ApplyPreInputs(Tick, false, m_PredictedWorld);
 
+		// Fast-input ticks are speculative (the input isn't confirmed yet), so don't let them
+		// queue up real sound/visual events - those get handled for real once the tick is confirmed.
+		const bool PrevPredictEvents = m_PredictedWorld.m_WorldConfig.m_PredictEvents;
+		if(FastInputTick)
+			m_PredictedWorld.m_WorldConfig.m_PredictEvents = false;
 		m_PredictedWorld.Tick();
+		m_PredictedWorld.m_WorldConfig.m_PredictEvents = PrevPredictEvents;
 
 		// fetch the current characters
 		if(Tick == PredictionTick)
@@ -2749,7 +2778,7 @@ void CGameClient::OnPredict()
 			}
 
 		// check if we want to trigger effects
-		if(Tick > m_aLastNewPredictedTick[Dummy])
+		if(Tick > m_aLastNewPredictedTick[Dummy] && Tick <= FinalTickRegular)
 		{
 			m_aLastNewPredictedTick[Dummy] = Tick;
 			m_NewPredictedTick = true;
@@ -2774,7 +2803,7 @@ void CGameClient::OnPredict()
 		}
 
 		// check if we want to trigger predicted airjump for dummy
-		if(AntiPingPlayers() && pDummyChar && Tick > m_aLastNewPredictedTick[!Dummy])
+		if(AntiPingPlayers() && pDummyChar && Tick > m_aLastNewPredictedTick[!Dummy] && Tick <= FinalTickRegular)
 		{
 			m_aLastNewPredictedTick[!Dummy] = Tick;
 			vec2 Pos = pDummyChar->Core()->m_Pos;
@@ -2887,6 +2916,11 @@ void CGameClient::OnPredict()
 
 	if(m_NewPredictedTick)
 		m_Ghost.OnNewPredictedSnapshot();
+}
+
+bool CGameClient::CheckNewInput()
+{
+	return m_Controls.CheckNewInput();
 }
 
 void CGameClient::OnActivateEditor()
@@ -3824,6 +3858,16 @@ void CGameClient::UpdateRenderedCharacters()
 				vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
 				m_aClients[i].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy));
 
+			// Don't extrapolate while actively hooking (or about to be, per the extrapolated
+			// state itself): the hook state/direction transition is much more sensitive to
+			// misprediction than plain movement, and shows up as the hook visibly firing in
+			// the wrong direction for a moment before snapping to correct. Keep fast input
+			// scoped to free movement, where it works cleanly.
+			if(g_Config.m_EcFastInput && i == m_Snap.m_LocalClientId && pChar->Core()->m_HookState <= HOOK_IDLE)
+				Pos = GetFastInputPos(i);
+			else if(i == m_Snap.m_LocalClientId)
+				m_FastInputPosValid = false; // start fresh (no stale clamp anchor) next time fast input applies again
+
 			if(i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy]))
 			{
 				m_aClients[i].m_IsPredictedLocal = true;
@@ -4000,6 +4044,72 @@ vec2 CGameClient::GetSmoothPos(int ClientId)
 				Pos[i] = mix(m_aClients[ClientId].m_aPredPos[(SmoothTick - 1) % 200][i], m_aClients[ClientId].m_aPredPos[SmoothTick % 200][i], SmoothIntra);
 		}
 	}
+	return Pos;
+}
+
+// ec_fast_input: find where the local character ended up in the ring buffer of predicted
+// positions once the extra fast-input ticks (see OnPredict) are accounted for, and blend
+// towards it based on how far past the regular predicted tick we currently are.
+vec2 CGameClient::GetFastInputPos(int ClientId)
+{
+	const float PredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	const int PredTick = Client()->PredGameTick(g_Config.m_ClDummy);
+
+	vec2 Pos = mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, PredIntraTick);
+	const vec2 RegularPos = Pos; // baseline, not touched by the extra fast-input ticks below
+
+	const float FastInputIntra = (g_Config.m_EcFastInputAmount % 20) / 20.0f;
+	int FastInputTicks = g_Config.m_EcFastInputAmount / 20;
+
+	// Combine the regular sub-tick position with the extra fast-input ticks into one
+	// continuous position along the ring buffer, carrying over into an extra whole tick
+	// if the fractional parts add up past 1.0
+	const float CombinedIntra = PredIntraTick + FastInputIntra;
+	float IntraWholePart = 0.0f;
+	const float FinalIntra = std::modf(CombinedIntra, &IntraWholePart);
+	FastInputTicks += static_cast<int>(IntraWholePart);
+
+	const int FinalTick = PredTick + FastInputTicks;
+
+	if(FinalTick > 0 &&
+		m_aClients[ClientId].m_aPredTick[(FinalTick - 1) % 200] >= Client()->PrevGameTick(g_Config.m_ClDummy) &&
+		m_aClients[ClientId].m_aPredTick[FinalTick % 200] <= PredTick + (g_Config.m_EcFastInputAmount + 19) / 20)
+	{
+		Pos = mix(m_aClients[ClientId].m_aPredPos[(FinalTick - 1) % 200], m_aClients[ClientId].m_aPredPos[FinalTick % 200], FinalIntra);
+	}
+
+	// If the regular (confirmed, non-extrapolated) position itself just jumped a lot since
+	// the last frame we rendered, that's a teleport/respawn/freeze reset, not a
+	// misprediction - let the extrapolated result through untouched and reset the clamp
+	// anchor, rather than fighting a legitimate large position change.
+	if(!m_FastInputPosValid || distance(RegularPos, m_FastInputPosLast) > 200.0f)
+	{
+		m_FastInputPosLast = Pos;
+		m_FastInputPosValid = true;
+		return Pos;
+	}
+
+	// Clamp any frame-to-frame jump in the extrapolated output to a generous multiple of
+	// the character's own recently observed speed (measured directly from the ring buffer,
+	// so it naturally scales with speedup tiles/hook momentum instead of using a fixed cap
+	// that would fight those). A jump bigger than that can only be a misprediction
+	// correction snapping in, never real movement - so clamping it can't affect legitimate
+	// motion, only spread the visible snap smoothly over a couple frames instead of one.
+	{
+		const vec2 RecentPrev = m_aClients[ClientId].m_aPredPos[(PredTick - 1) % 200];
+		const vec2 RecentCur = m_aClients[ClientId].m_aPredPos[PredTick % 200];
+		const float RecentSpeedPerSec = distance(RecentPrev, RecentCur) * 50.0f; // one tick = 1/50s
+		const float DtSeconds = std::clamp(Client()->RenderFrameTime(), 0.0001f, 0.1f);
+		const float MaxDelta = std::max(RecentSpeedPerSec, 200.0f) * DtSeconds * 3.0f;
+
+		const vec2 Delta = Pos - m_FastInputPosLast;
+		const float DeltaLen = length(Delta);
+		if(DeltaLen > MaxDelta && DeltaLen > 0.0001f)
+			Pos = m_FastInputPosLast + Delta * (MaxDelta / DeltaLen);
+	}
+	m_FastInputPosLast = Pos;
+	m_FastInputPosValid = true;
+
 	return Pos;
 }
 

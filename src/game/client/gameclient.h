@@ -40,6 +40,8 @@
 #include "components/damageind.h"
 #include "components/debughud.h"
 #include "components/effects.h"
+#include "components/elysium/rainbow.h"
+#include "components/elysium/translate.h"
 #include "components/emoticon.h"
 #include "components/flow.h"
 #include "components/freezebars.h"
@@ -172,6 +174,8 @@ public:
 	CVoting m_Voting;
 	CSpectator m_Spectator;
 
+	CRainbow m_Rainbow;
+	CTranslate m_Translate;
 	CPlayers m_Players;
 	CNamePlates m_NamePlates;
 	CFreezeBars m_FreezeBars;
@@ -620,6 +624,7 @@ public:
 	void InvalidateSnapshot() override;
 	void OnNewSnapshot(bool DummySwapped) override;
 	void OnPredict() override;
+	bool CheckNewInput() override;
 	void OnActivateEditor() override;
 	void OnDummySwap() override;
 	int OnSnapInput(int *pData, bool Dummy, bool Force) override;
@@ -949,6 +954,9 @@ private:
 	void DetectStrongHook();
 
 	vec2 GetSmoothPos(int ClientId);
+	vec2 GetFastInputPos(int ClientId);
+	bool m_FastInputPosValid = false;
+	vec2 m_FastInputPosLast = vec2(0.0f, 0.0f);
 
 	int m_IsDummySwapping;
 	CCharOrder m_CharOrder;

@@ -1481,7 +1481,8 @@ void CMenus::RenderSettings(CUIRect MainView)
 		Localize("Graphics"),
 		Localize("Sound"),
 		Localize("DDNet"),
-		Localize("Assets")};
+		Localize("Assets"),
+		"ElysiumClient"};
 	static CButtonContainer s_aTabButtons[SETTINGS_LENGTH];
 
 	for(int i = 0; i < SETTINGS_LENGTH; i++)
@@ -1544,6 +1545,11 @@ void CMenus::RenderSettings(CUIRect MainView)
 	{
 		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
 		RenderSettingsCustom(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_ELYSIUM)
+	{
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
+		RenderSettingsElysium(MainView);
 	}
 	else
 	{
@@ -3021,6 +3027,333 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 #endif
+}
+
+void CMenus::RenderSettingsElysium(CUIRect MainView)
+{
+	enum
+	{
+		ELYSIUM_TAB_VISUAL = 0,
+		ELYSIUM_TAB_INPUT,
+		ELYSIUM_TAB_TRANSLATE,
+		ELYSIUM_TAB_MISC,
+
+		NUMBER_OF_ELYSIUM_TABS,
+	};
+
+	static int s_CurElysiumTab = ELYSIUM_TAB_VISUAL;
+	static CButtonContainer s_aElysiumTabButtons[NUMBER_OF_ELYSIUM_TABS];
+	const char *apElysiumTabs[NUMBER_OF_ELYSIUM_TABS] = {
+		"Visuals",
+		"Input",
+		"Translate",
+		"Misc"};
+
+	CUIRect TabBar, Button;
+	MainView.HSplitTop(26.0f, &TabBar, &MainView);
+	MainView.HSplitTop(10.0f, nullptr, &MainView);
+	const float TabWidth = TabBar.w / NUMBER_OF_ELYSIUM_TABS;
+	for(int Tab = 0; Tab < NUMBER_OF_ELYSIUM_TABS; Tab++)
+	{
+		TabBar.VSplitLeft(TabWidth, &Button, &TabBar);
+		const int Corners = Tab == 0 ? IGraphics::CORNER_L : Tab == NUMBER_OF_ELYSIUM_TABS - 1 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE;
+		if(DoButton_MenuTab(&s_aElysiumTabButtons[Tab], apElysiumTabs[Tab], s_CurElysiumTab == Tab, &Button, Corners))
+			s_CurElysiumTab = Tab;
+	}
+
+	if(s_CurElysiumTab == ELYSIUM_TAB_VISUAL)
+		RenderSettingsElysiumVisual(MainView);
+	else if(s_CurElysiumTab == ELYSIUM_TAB_INPUT)
+		RenderSettingsElysiumInput(MainView);
+	else if(s_CurElysiumTab == ELYSIUM_TAB_TRANSLATE)
+		RenderSettingsElysiumTranslate(MainView);
+	else if(s_CurElysiumTab == ELYSIUM_TAB_MISC)
+		RenderSettingsElysiumMisc(MainView);
+}
+
+void CMenus::RenderSettingsElysiumVisual(CUIRect MainView)
+{
+	CUIRect Button, Left, Right, Label;
+
+	CUIRect Visual;
+	MainView.HSplitTop(130.0f, &Visual, &MainView);
+	Visual.HSplitTop(30.0f, &Label, &Visual);
+	Ui()->DoLabel(&Label, "Tee", 20.0f, TEXTALIGN_ML);
+	Visual.HSplitTop(5.0f, nullptr, &Visual);
+	Visual.VSplitMid(&Left, &Right, 20.0f);
+
+	Left.HSplitTop(20.0f, &Button, &Left);
+	if(DoButton_CheckBox(&g_Config.m_EcRainbowTee, "Rainbow tee colors", g_Config.m_EcRainbowTee, &Button))
+		g_Config.m_EcRainbowTee ^= 1;
+
+	if(g_Config.m_EcRainbowTee)
+	{
+		Right.HSplitTop(20.0f, &Button, &Right);
+		Ui()->DoScrollbarOption(&g_Config.m_EcRainbowSpeed, &g_Config.m_EcRainbowSpeed, &Button, "Speed", 1, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
+	}
+
+	Left.HSplitTop(5.0f, nullptr, &Left);
+	Left.HSplitTop(20.0f, &Button, &Left);
+	if(DoButton_CheckBox(&g_Config.m_EcOutline, "Tee outline", g_Config.m_EcOutline, &Button))
+		g_Config.m_EcOutline ^= 1;
+
+	if(g_Config.m_EcOutline)
+	{
+		static CButtonContainer s_OutlineColorReset;
+		Right.HSplitTop(5.0f, nullptr, &Right);
+		DoLine_ColorPicker(&s_OutlineColorReset, 25.0f, 13.0f, 2.0f, &Right, "Outline color", &g_Config.m_EcOutlineColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
+	}
+
+}
+
+void CMenus::RenderSettingsElysiumInput(CUIRect MainView)
+{
+	CUIRect Button, Label;
+
+	CUIRect Input;
+	MainView.HSplitTop(200.0f, &Input, &MainView);
+	Input.HSplitTop(30.0f, &Label, &Input);
+	Ui()->DoLabel(&Label, "Prediction", 20.0f, TEXTALIGN_ML);
+	Input.HSplitTop(5.0f, nullptr, &Input);
+
+	Input.HSplitTop(20.0f, &Button, &Input);
+	if(DoButton_CheckBox(&g_Config.m_EcFastInput, "Fast input (reduced visual delay)", g_Config.m_EcFastInput, &Button))
+		g_Config.m_EcFastInput ^= 1;
+
+	if(g_Config.m_EcFastInput)
+	{
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcFastInputAmount, &g_Config.m_EcFastInputAmount, &Button, "Amount", 1, 20, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
+
+		Input.HSplitTop(5.0f, nullptr, &Input);
+		CUIRect PresetLabel, PresetButtons, MaikButton, NumbButton;
+		Input.HSplitTop(18.0f, &PresetLabel, &Input);
+		Ui()->DoLabel(&PresetLabel, "Presets:", 14.0f, TEXTALIGN_ML);
+		Input.HSplitTop(20.0f, &PresetButtons, &Input);
+		PresetButtons.VSplitMid(&MaikButton, &NumbButton, 5.0f);
+
+		static CButtonContainer s_MaikInputButton;
+		if(DoButton_Menu(&s_MaikInputButton, "Maik Input", g_Config.m_EcFastInputMode == 1, &MaikButton))
+		{
+			g_Config.m_EcFastInput = 1;
+			g_Config.m_EcFastInputAmount = 20;
+			g_Config.m_EcFastInputMode = 1;
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_MaikInputButton, &MaikButton, "Skips the safety net that keeps aim steady on the first tick of a hook/fire - more responsive, more misprediction risk right at that moment");
+
+		static CButtonContainer s_NumbInputButton;
+		if(DoButton_Menu(&s_NumbInputButton, "Numb Input", g_Config.m_EcFastInputMode == 2, &NumbButton))
+		{
+			g_Config.m_EcFastInput = 1;
+			g_Config.m_EcFastInputAmount = 20;
+			g_Config.m_EcFastInputMode = 2;
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_NumbInputButton, &NumbButton, "Throttles repredicts to at most once per the interval below - calmer, less reactive to every small input blip");
+
+		if(g_Config.m_EcFastInputMode == 2)
+		{
+			Input.HSplitTop(20.0f, &Button, &Input);
+			Ui()->DoScrollbarOption(&g_Config.m_EcFastInputThrottleMs, &g_Config.m_EcFastInputThrottleMs, &Button, "Throttle", 10, 500, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
+		}
+
+		if(g_Config.m_EcFastInputMode != 0)
+		{
+			Input.HSplitTop(20.0f, &Button, &Input);
+			CUIRect NormalButton;
+			Button.VSplitLeft(120.0f, &NormalButton, nullptr);
+			static CButtonContainer s_NormalInputButton;
+			if(DoButton_Menu(&s_NormalInputButton, "Reset to Normal", 0, &NormalButton))
+				g_Config.m_EcFastInputMode = 0;
+		}
+	}
+}
+
+void CMenus::RenderSettingsElysiumTranslate(CUIRect MainView)
+{
+	CUIRect Button, Label;
+
+	static const char *s_apTranslateLanguageNames[] = {
+		"Arabic", "Chinese (Simplified)", "Chinese (Traditional)", "Czech", "Dutch", "English",
+		"Finnish", "French", "German", "Greek", "Hebrew", "Hindi", "Hungarian", "Italian",
+		"Japanese", "Korean", "Polish", "Portuguese", "Romanian", "Russian", "Spanish", "Swedish",
+		"Thai", "Turkish", "Ukrainian", "Vietnamese"};
+	static const char *s_apTranslateLanguageCodes[] = {
+		"ar", "zh", "zh-TW", "cs", "nl", "en",
+		"fi", "fr", "de", "el", "he", "hi", "hu", "it",
+		"ja", "ko", "pl", "pt", "ro", "ru", "es", "sv",
+		"th", "tr", "uk", "vi"};
+	const int NumTranslateLanguages = (int)std::size(s_apTranslateLanguageNames);
+	static_assert(std::size(s_apTranslateLanguageNames) == std::size(s_apTranslateLanguageCodes), "language name/code list length mismatch");
+	auto TranslateLanguageIndex = [&](const char *pCode) {
+		for(int i = 0; i < NumTranslateLanguages; i++)
+			if(str_comp_nocase(pCode, s_apTranslateLanguageCodes[i]) == 0)
+				return i;
+		return 5; // Fall back to English if unset or a custom code we don't have a name for
+	};
+
+	CUIRect Translate;
+	MainView.HSplitTop(230.0f, &Translate, &MainView);
+	Translate.HSplitTop(30.0f, &Label, &Translate);
+	Ui()->DoLabel(&Label, "Translate", 20.0f, TEXTALIGN_ML);
+	Translate.HSplitTop(5.0f, nullptr, &Translate);
+
+	{
+		static std::vector<const char *> s_TranslateBackendNames = {"Google", "FreeTranslateAPI (defunct)", "LibreTranslate"};
+		static const char *s_apTranslateBackendValues[] = {"google", "ftapi", "libretranslate"};
+		static CUi::SDropDownState s_TranslateBackendDropDownState;
+		static CScrollRegion s_TranslateBackendDropDownScrollRegion;
+		s_TranslateBackendDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_TranslateBackendDropDownScrollRegion;
+		int BackendSelectedOld = 0;
+		for(int i = 0; i < (int)std::size(s_apTranslateBackendValues); i++)
+		{
+			if(str_comp_nocase(g_Config.m_EcTranslateBackend, s_apTranslateBackendValues[i]) == 0)
+				BackendSelectedOld = i;
+		}
+		CUIRect BackendDropDownRect;
+		Translate.HSplitTop(20.0f, &BackendDropDownRect, &Translate);
+		BackendDropDownRect.VSplitLeft(120.0f, &Label, &BackendDropDownRect);
+		Ui()->DoLabel(&Label, "Backend: ", 14.0f, TEXTALIGN_ML);
+		const int BackendSelectedNew = Ui()->DoDropDown(&BackendDropDownRect, BackendSelectedOld, s_TranslateBackendNames.data(), s_TranslateBackendNames.size(), s_TranslateBackendDropDownState);
+		if(BackendSelectedOld != BackendSelectedNew)
+			str_copy(g_Config.m_EcTranslateBackend, s_apTranslateBackendValues[BackendSelectedNew]);
+	}
+	Translate.HSplitTop(5.0f, nullptr, &Translate);
+
+	Translate.HSplitTop(20.0f, &Button, &Translate);
+	if(DoButton_CheckBox(&g_Config.m_EcTranslateAuto, "Automatically translate incoming messages", g_Config.m_EcTranslateAuto, &Button))
+		g_Config.m_EcTranslateAuto ^= 1;
+	if(g_Config.m_EcTranslateAuto && str_comp_nocase(g_Config.m_EcTranslateBackend, "ftapi") == 0)
+	{
+		Translate.HSplitTop(18.0f, &Label, &Translate);
+		Ui()->DoLabel(&Label, "FreeTranslateAPI does not support automatic translation, switch to Google or LibreTranslate", 12.0f, TEXTALIGN_ML);
+	}
+	if(g_Config.m_EcTranslateAuto)
+	{
+		CUIRect IncomingTargetBox;
+		Translate.HSplitTop(20.0f, &IncomingTargetBox, &Translate);
+		IncomingTargetBox.VSplitMid(&Label, &IncomingTargetBox);
+		Ui()->DoLabel(&Label, "Translate incoming to:", 14.0f, TEXTALIGN_ML);
+		static CUi::SDropDownState s_IncomingLangDropDownState;
+		static CScrollRegion s_IncomingLangDropDownScrollRegion;
+		s_IncomingLangDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_IncomingLangDropDownScrollRegion;
+		const int IncomingLangOld = TranslateLanguageIndex(g_Config.m_EcTranslateTarget);
+		const int IncomingLangNew = Ui()->DoDropDown(&IncomingTargetBox, IncomingLangOld, s_apTranslateLanguageNames, NumTranslateLanguages, s_IncomingLangDropDownState);
+		if(IncomingLangOld != IncomingLangNew)
+			str_copy(g_Config.m_EcTranslateTarget, s_apTranslateLanguageCodes[IncomingLangNew]);
+	}
+	Translate.HSplitTop(5.0f, nullptr, &Translate);
+
+	Translate.HSplitTop(20.0f, &Button, &Translate);
+	if(DoButton_CheckBox(&g_Config.m_EcTranslateOutgoing, "Translate your outgoing messages", g_Config.m_EcTranslateOutgoing, &Button))
+		g_Config.m_EcTranslateOutgoing ^= 1;
+	if(g_Config.m_EcTranslateOutgoing)
+	{
+		CUIRect OutgoingTargetBox;
+		Translate.HSplitTop(20.0f, &OutgoingTargetBox, &Translate);
+		OutgoingTargetBox.VSplitMid(&Label, &OutgoingTargetBox);
+		Ui()->DoLabel(&Label, "Translate outgoing to:", 14.0f, TEXTALIGN_ML);
+		static CUi::SDropDownState s_OutgoingLangDropDownState;
+		static CScrollRegion s_OutgoingLangDropDownScrollRegion;
+		s_OutgoingLangDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_OutgoingLangDropDownScrollRegion;
+		const int OutgoingLangOld = TranslateLanguageIndex(g_Config.m_EcTranslateOutgoingTarget);
+		const int OutgoingLangNew = Ui()->DoDropDown(&OutgoingTargetBox, OutgoingLangOld, s_apTranslateLanguageNames, NumTranslateLanguages, s_OutgoingLangDropDownState);
+		if(OutgoingLangOld != OutgoingLangNew)
+			str_copy(g_Config.m_EcTranslateOutgoingTarget, s_apTranslateLanguageCodes[OutgoingLangNew]);
+	}
+	Translate.HSplitTop(5.0f, nullptr, &Translate);
+
+	if(str_comp_nocase(g_Config.m_EcTranslateBackend, "libretranslate") == 0)
+	{
+		CUIRect EndpointBox;
+		Translate.HSplitTop(20.0f, &EndpointBox, &Translate);
+		EndpointBox.VSplitMid(&Label, &EndpointBox);
+		Ui()->DoLabel(&Label, "LibreTranslate endpoint:", 14.0f, TEXTALIGN_ML);
+		static CLineInput s_TranslateEndpoint(g_Config.m_EcTranslateEndpoint, sizeof(g_Config.m_EcTranslateEndpoint));
+		s_TranslateEndpoint.SetEmptyText("localhost:5000/translate");
+		Ui()->DoEditBox(&s_TranslateEndpoint, &EndpointBox, 14.0f);
+		Translate.HSplitTop(5.0f, nullptr, &Translate);
+
+		CUIRect KeyBox;
+		Translate.HSplitTop(20.0f, &KeyBox, &Translate);
+		KeyBox.VSplitMid(&Label, &KeyBox);
+		Ui()->DoLabel(&Label, "LibreTranslate API key:", 14.0f, TEXTALIGN_ML);
+		static CLineInput s_TranslateKey(g_Config.m_EcTranslateKey, sizeof(g_Config.m_EcTranslateKey));
+		s_TranslateKey.SetEmptyText("Optional");
+		Ui()->DoEditBox(&s_TranslateKey, &KeyBox, 14.0f);
+	}
+}
+
+void CMenus::RenderSettingsElysiumMisc(CUIRect MainView)
+{
+	CUIRect Button, Label, ApplyButton, ErrorLabel;
+
+	CUIRect Resolution;
+	MainView.HSplitTop(90.0f, &Resolution, &MainView);
+	Resolution.HSplitTop(30.0f, &Label, &Resolution);
+	Ui()->DoLabel(&Label, "Custom Resolution", 20.0f, TEXTALIGN_ML);
+	Resolution.HSplitTop(5.0f, nullptr, &Resolution);
+
+	Resolution.HSplitTop(20.0f, &Button, &Resolution);
+	Button.VSplitRight(80.0f, &Button, &ApplyButton);
+	Button.VSplitRight(5.0f, &Button, nullptr);
+
+	static CLineInput s_ResolutionInput(g_Config.m_EcCustomResolution, sizeof(g_Config.m_EcCustomResolution));
+	s_ResolutionInput.SetEmptyText("e.g. 1920x1080");
+	Ui()->DoClearableEditBox(&s_ResolutionInput, &Button, 14.0f);
+
+	static CButtonContainer s_ApplyButton;
+	static char s_aError[64] = "";
+	if(DoButton_Menu(&s_ApplyButton, "Apply", 0, &ApplyButton))
+	{
+		s_aError[0] = '\0';
+		const char *pX = str_find(s_ResolutionInput.GetString(), "x");
+		const int Width = str_toint_base(s_ResolutionInput.GetString(), 10);
+		const int Height = pX ? str_toint_base(pX + 1, 10) : 0;
+		if(!pX || Width < 100 || Height < 100 || Width > 16384 || Height > 16384)
+		{
+			str_copy(s_aError, "Invalid resolution, use e.g. 1920x1080");
+		}
+		else
+		{
+			// Resize the window to the target size first, then switch to exclusive
+			// fullscreen - it picks up the window's current size as the display mode
+			// to request, which is what makes the GPU/monitor scale it to fill the
+			// screen instead of just showing a small window.
+			g_Config.m_GfxScreenWidth = Width;
+			g_Config.m_GfxScreenHeight = Height;
+			Graphics()->ResizeToScreen();
+			Graphics()->SetWindowParams(1, false);
+		}
+	}
+
+	if(s_aError[0])
+	{
+		Resolution.HSplitTop(20.0f, &ErrorLabel, &Resolution);
+		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
+		Ui()->DoLabel(&ErrorLabel, s_aError, 14.0f, TEXTALIGN_ML);
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
+
+	// Already built into stock DDNet (cl_reconnect_full/cl_reconnect_timeout), just not
+	// exposed in any menu - surfacing it here since it's directly useful
+	CUIRect Reconnect;
+	MainView.HSplitTop(100.0f, &Reconnect, &MainView);
+	Reconnect.HSplitTop(30.0f, &Label, &Reconnect);
+	Ui()->DoLabel(&Label, "Auto-Reconnect", 20.0f, TEXTALIGN_ML);
+	Reconnect.HSplitTop(5.0f, nullptr, &Reconnect);
+
+	Reconnect.HSplitTop(20.0f, &Button, &Reconnect);
+	if(g_Config.m_ClReconnectFull > 0)
+		Ui()->DoScrollbarOption(&g_Config.m_ClReconnectFull, &g_Config.m_ClReconnectFull, &Button, "Reconnect when server full, after", 0, 600, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "s");
+	else
+		Ui()->DoScrollbarOption(&g_Config.m_ClReconnectFull, &g_Config.m_ClReconnectFull, &Button, "Reconnect when server full, after", 0, 600, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "s (off)");
+
+	Reconnect.HSplitTop(5.0f, nullptr, &Reconnect);
+	Reconnect.HSplitTop(20.0f, &Button, &Reconnect);
+	if(g_Config.m_ClReconnectTimeout > 0)
+		Ui()->DoScrollbarOption(&g_Config.m_ClReconnectTimeout, &g_Config.m_ClReconnectTimeout, &Button, "Reconnect on timeout, after", 0, 600, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "s");
+	else
+		Ui()->DoScrollbarOption(&g_Config.m_ClReconnectTimeout, &g_Config.m_ClReconnectTimeout, &Button, "Reconnect on timeout, after", 0, 600, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "s (off)");
 }
 
 CUi::EPopupMenuFunctionResult CMenus::PopupMapPicker(void *pContext, CUIRect View, bool Active)

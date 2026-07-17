@@ -2503,6 +2503,10 @@ if(CLIENT)
     components/debughud.h
     components/effects.cpp
     components/effects.h
+    components/elysium/rainbow.cpp
+    components/elysium/rainbow.h
+    components/elysium/translate.cpp
+    components/elysium/translate.h
     components/emoticon.cpp
     components/emoticon.h
     components/envelope_state.cpp

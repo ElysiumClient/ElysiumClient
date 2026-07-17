@@ -16,9 +16,18 @@
 #include <game/client/lineinput.h>
 #include <game/client/render.h>
 
+#include <memory>
 #include <vector>
 
 constexpr auto SAVES_FILE = "ddnet-saves.txt";
+
+class CTranslateResponse
+{
+public:
+	bool m_Error = false;
+	char m_Text[1024] = "";
+	char m_Language[16] = "";
+};
 
 class CChat : public CComponent
 {
@@ -61,6 +70,8 @@ class CChat : public CComponent
 		float m_TextYOffset;
 
 		int m_TimesRepeated;
+
+		std::shared_ptr<CTranslateResponse> m_pTranslateResponse;
 	};
 
 	bool m_PrevScoreBoardShowed;
@@ -159,6 +170,8 @@ class CChat : public CComponent
 
 	bool LineShouldHighlight(const char *pLine, const char *pName);
 	void StoreSave(const char *pText);
+
+	friend class CTranslate;
 
 public:
 	CChat();
