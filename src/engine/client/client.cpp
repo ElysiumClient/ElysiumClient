@@ -2052,7 +2052,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket, int Conn, bool Dummy)
 			}
 
 			if(Target)
-				m_PredictedTime.Update(&m_aInputtimeMarginGraphs[Conn], Target, TimeLeft, CSmoothTime::ADJUSTDIRECTION_UP);
+				m_PredictedTime.Update(&m_aInputtimeMarginGraphs[Conn], Target, TimeLeft, CSmoothTime::ADJUSTDIRECTION_UP, g_Config.m_EcFastInput && g_Config.m_EcFastInputLagGuard);
 		}
 		else if(Msg == NETMSG_SNAP || Msg == NETMSG_SNAPSINGLE || Msg == NETMSG_SNAPEMPTY)
 		{
@@ -2900,26 +2900,11 @@ void CClient::Update()
 				}
 
 				// ec_fast_input: repredict immediately when the input changes, instead of
-				// waiting for the next confirmed tick boundary. All modes trigger on the
-				// same discrete input changes (CheckNewInput handles the mode-specific aim
-				// handling internally) - "Numb Input" additionally throttles how often that's
-				// allowed to fire, for a calmer, less reactive feel.
-				if(g_Config.m_EcFastInput)
-				{
-					const bool InputChanged = GameClient()->CheckNewInput();
-					if(g_Config.m_EcFastInputMode == 2)
-					{
-						if(InputChanged && time_get() > m_LastFastInputRepredictTime + time_freq() * g_Config.m_EcFastInputThrottleMs / 1000)
-						{
-							Repredict = true;
-							m_LastFastInputRepredictTime = time_get();
-						}
-					}
-					else if(InputChanged)
-					{
-						Repredict = true;
-					}
-				}
+				// waiting for the next confirmed tick boundary - this is what makes it feel
+				// instant. CheckNewInput() also updates the per-dummy fast-input snapshots
+				// that OnPredict() reads to compose the extrapolated ticks.
+				if(g_Config.m_EcFastInput && GameClient()->CheckNewInput())
+					Repredict = true;
 			}
 
 			// only do sane predictions
@@ -5368,9 +5353,28 @@ int CClient::MaxLatencyTicks() const
 	return GameTickSpeed() + (PredictionMargin() * GameTickSpeed()) / 1000;
 }
 
+// ec_fast_input_auto_margin: rough ms estimate of the active mode's prediction amount, just
+// to floor the prediction margin so fast input's extra ticks don't run past data the server
+// hasn't sent yet. Doesn't need to be exact - it's a safety floor, not the real tick budget
+// (see FastInputSelfOffsets in gameclient.cpp for the precise per-mode math).
+static int EcFastInputApproxMs()
+{
+	switch(g_Config.m_EcFastInputMode)
+	{
+	case 1: return (g_Config.m_EcSaikoAmount * 10 + g_Config.m_EcSaikoAmountFine) / 50;
+	case 2: return g_Config.m_EcFastInputTClientAmount;
+	case 3: return (g_Config.m_EcLewnAmount * 10 + g_Config.m_EcLewnAmountFine) / 50;
+	case 4: return (g_Config.m_EcZenishAmount * 10 + g_Config.m_EcZenishAmountFine) / 50;
+	default: return std::max(g_Config.m_EcFastInputMovementAmount, g_Config.m_EcFastInputActionAmount);
+	}
+}
+
 int CClient::PredictionMargin() const
 {
-	return m_ServerCapabilities.m_SyncWeaponInput ? g_Config.m_ClPredictionMargin : 10;
+	int Margin = m_ServerCapabilities.m_SyncWeaponInput ? g_Config.m_ClPredictionMargin : 10;
+	if(g_Config.m_EcFastInput && g_Config.m_EcFastInputAutoMargin)
+		Margin = std::max(Margin, EcFastInputApproxMs());
+	return Margin;
 }
 
 int CClient::UdpConnectivity(int NetType)

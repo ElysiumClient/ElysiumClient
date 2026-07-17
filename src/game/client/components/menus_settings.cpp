@@ -3110,8 +3110,10 @@ void CMenus::RenderSettingsElysiumInput(CUIRect MainView)
 {
 	CUIRect Button, Label;
 
+	// ec_fast_input: ported from AetherClient (github.com/AetherClientTeam/AetherClient),
+	// used with permission.
 	CUIRect Input;
-	MainView.HSplitTop(200.0f, &Input, &MainView);
+	MainView.HSplitTop(420.0f, &Input, &MainView);
 	Input.HSplitTop(30.0f, &Label, &Input);
 	Ui()->DoLabel(&Label, "Prediction", 20.0f, TEXTALIGN_ML);
 	Input.HSplitTop(5.0f, nullptr, &Input);
@@ -3120,52 +3122,122 @@ void CMenus::RenderSettingsElysiumInput(CUIRect MainView)
 	if(DoButton_CheckBox(&g_Config.m_EcFastInput, "Fast input (reduced visual delay)", g_Config.m_EcFastInput, &Button))
 		g_Config.m_EcFastInput ^= 1;
 
-	if(g_Config.m_EcFastInput)
+	if(!g_Config.m_EcFastInput)
+		return;
+
+	Input.HSplitTop(5.0f, nullptr, &Input);
+	CUIRect ModeLabel, ModeButtons;
+	Input.HSplitTop(18.0f, &ModeLabel, &Input);
+	Ui()->DoLabel(&ModeLabel, "Mode:", 14.0f, TEXTALIGN_ML);
+	Input.HSplitTop(20.0f, &ModeButtons, &Input);
+
+	static const char *s_apModeNames[] = {"Aether+", "Saiko+", "TClient", "Lewn+", "Zeni$h+"};
+	static const char *s_apModeTooltips[] = {
+		"Adaptive prediction with separate movement/action tuning and A/D quick-stop assist - a good all-round default",
+		"Sharp, direct prediction with sub-tick precision - no render smoothing, feels the most immediate",
+		"The original single-value fast input from TClient - simple and predictable",
+		"Prediction tuned for a smoother, more forgiving feel with its own correction sharpness",
+		"Prediction tuned for aggressive hook/fire responsiveness (always predicts at least 1.35 ticks ahead for actions)"};
+	static CButtonContainer s_aModeButtons[5];
+	CUIRect Rest = ModeButtons;
+	for(int i = 0; i < 5; i++)
+	{
+		CUIRect ModeButton;
+		if(i < 4)
+		{
+			Rest.VSplitLeft(Rest.w / (5 - i) - 4.0f, &ModeButton, &Rest);
+			Rest.VSplitLeft(4.0f, nullptr, &Rest);
+		}
+		else
+			ModeButton = Rest;
+		if(DoButton_Menu(&s_aModeButtons[i], s_apModeNames[i], g_Config.m_EcFastInputMode == i, &ModeButton))
+			g_Config.m_EcFastInputMode = i;
+		GameClient()->m_Tooltips.DoToolTip(&s_aModeButtons[i], &ModeButton, s_apModeTooltips[i]);
+	}
+
+	Input.HSplitTop(5.0f, nullptr, &Input);
+
+	const int Mode = g_Config.m_EcFastInputMode;
+	if(Mode == 0) // Aether+
 	{
 		Input.HSplitTop(20.0f, &Button, &Input);
-		Ui()->DoScrollbarOption(&g_Config.m_EcFastInputAmount, &g_Config.m_EcFastInputAmount, &Button, "Amount", 1, 20, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
-
-		Input.HSplitTop(5.0f, nullptr, &Input);
-		CUIRect PresetLabel, PresetButtons, MaikButton, NumbButton;
-		Input.HSplitTop(18.0f, &PresetLabel, &Input);
-		Ui()->DoLabel(&PresetLabel, "Presets:", 14.0f, TEXTALIGN_ML);
-		Input.HSplitTop(20.0f, &PresetButtons, &Input);
-		PresetButtons.VSplitMid(&MaikButton, &NumbButton, 5.0f);
-
-		static CButtonContainer s_MaikInputButton;
-		if(DoButton_Menu(&s_MaikInputButton, "Maik Input", g_Config.m_EcFastInputMode == 1, &MaikButton))
+		Ui()->DoScrollbarOption(&g_Config.m_EcFastInputMovementAmount, &g_Config.m_EcFastInputMovementAmount, &Button, "Movement amount", 0, 50, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcFastInputActionAmount, &g_Config.m_EcFastInputActionAmount, &Button, "Action amount", 0, 50, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcFastInputSmoothCorrections, &g_Config.m_EcFastInputSmoothCorrections, &Button, "Correction sharpness", 0, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcFastInputBrakePriority, "A/D quick stop", g_Config.m_EcFastInputBrakePriority && g_Config.m_EcFastInputBrakeReleasePriority, &Button))
 		{
-			g_Config.m_EcFastInput = 1;
-			g_Config.m_EcFastInputAmount = 20;
-			g_Config.m_EcFastInputMode = 1;
+			g_Config.m_EcFastInputBrakePriority ^= 1;
+			g_Config.m_EcFastInputBrakeReleasePriority = g_Config.m_EcFastInputBrakePriority;
 		}
-		GameClient()->m_Tooltips.DoToolTip(&s_MaikInputButton, &MaikButton, "Skips the safety net that keeps aim steady on the first tick of a hook/fire - more responsive, more misprediction risk right at that moment");
-
-		static CButtonContainer s_NumbInputButton;
-		if(DoButton_Menu(&s_NumbInputButton, "Numb Input", g_Config.m_EcFastInputMode == 2, &NumbButton))
-		{
-			g_Config.m_EcFastInput = 1;
-			g_Config.m_EcFastInputAmount = 20;
-			g_Config.m_EcFastInputMode = 2;
-		}
-		GameClient()->m_Tooltips.DoToolTip(&s_NumbInputButton, &NumbButton, "Throttles repredicts to at most once per the interval below - calmer, less reactive to every small input blip");
-
-		if(g_Config.m_EcFastInputMode == 2)
-		{
-			Input.HSplitTop(20.0f, &Button, &Input);
-			Ui()->DoScrollbarOption(&g_Config.m_EcFastInputThrottleMs, &g_Config.m_EcFastInputThrottleMs, &Button, "Throttle", 10, 500, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
-		}
-
-		if(g_Config.m_EcFastInputMode != 0)
-		{
-			Input.HSplitTop(20.0f, &Button, &Input);
-			CUIRect NormalButton;
-			Button.VSplitLeft(120.0f, &NormalButton, nullptr);
-			static CButtonContainer s_NormalInputButton;
-			if(DoButton_Menu(&s_NormalInputButton, "Reset to Normal", 0, &NormalButton))
-				g_Config.m_EcFastInputMode = 0;
-		}
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcFastInputAdaptiveOthers, "Apply to other players", g_Config.m_EcFastInputAdaptiveOthers, &Button))
+			g_Config.m_EcFastInputAdaptiveOthers ^= 1;
 	}
+	else if(Mode == 1) // Saiko+
+	{
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcSaikoAmount, &g_Config.m_EcSaikoAmount, &Button, "Strength", 0, 500, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcSaikoAmountFine, &g_Config.m_EcSaikoAmountFine, &Button, "Fine tune", 0, 9, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcSaikoOthers, "Apply to other players", g_Config.m_EcSaikoOthers, &Button))
+			g_Config.m_EcSaikoOthers ^= 1;
+	}
+	else if(Mode == 2) // TClient
+	{
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcFastInputTClientAmount, &g_Config.m_EcFastInputTClientAmount, &Button, "Amount", 1, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "ms");
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcFastInputTClientOthers, "Apply to other players", g_Config.m_EcFastInputTClientOthers, &Button))
+			g_Config.m_EcFastInputTClientOthers ^= 1;
+	}
+	else if(Mode == 3) // Lewn+
+	{
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcLewnAmount, &g_Config.m_EcLewnAmount, &Button, "Strength", 100, 500, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcLewnAmountFine, &g_Config.m_EcLewnAmountFine, &Button, "Fine tune", 0, 9, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcLewnCorrection, &g_Config.m_EcLewnCorrection, &Button, "Correction sharpness", 0, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcLewnOthers, "Apply to other players", g_Config.m_EcLewnOthers, &Button))
+			g_Config.m_EcLewnOthers ^= 1;
+	}
+	else // Mode == 4: Zeni$h+
+	{
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcZenishAmount, &g_Config.m_EcZenishAmount, &Button, "Strength", 100, 500, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcZenishAmountFine, &g_Config.m_EcZenishAmountFine, &Button, "Fine tune", 0, 9, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+		Input.HSplitTop(20.0f, &Button, &Input);
+		Ui()->DoScrollbarOption(&g_Config.m_EcZenishCorrection, &g_Config.m_EcZenishCorrection, &Button, "Correction softness", 0, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "%");
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcZenishOthers, "Apply to other players", g_Config.m_EcZenishOthers, &Button))
+			g_Config.m_EcZenishOthers ^= 1;
+	}
+
+	if(Mode == 0)
+	{
+		Input.HSplitTop(20.0f, &Button, &Input);
+		if(DoButton_CheckBox(&g_Config.m_EcFastInputPingAssist, "Ping assist", g_Config.m_EcFastInputPingAssist, &Button))
+			g_Config.m_EcFastInputPingAssist ^= 1;
+	}
+
+	Input.HSplitTop(5.0f, nullptr, &Input);
+	Input.HSplitTop(20.0f, &Button, &Input);
+	if(DoButton_CheckBox(&g_Config.m_EcFastInputAutoMargin, "Safety margin (raise prediction margin to match)", g_Config.m_EcFastInputAutoMargin, &Button))
+		g_Config.m_EcFastInputAutoMargin ^= 1;
+
+	Input.HSplitTop(20.0f, &Button, &Input);
+	if(DoButton_CheckBox(&g_Config.m_EcFastInputLagGuard, "Network spike protection", g_Config.m_EcFastInputLagGuard, &Button))
+		g_Config.m_EcFastInputLagGuard ^= 1;
+
+	Input.HSplitTop(20.0f, &Button, &Input);
+	if(DoButton_CheckBox(&g_Config.m_EcFastInputDebug, "Debug overlay", g_Config.m_EcFastInputDebug, &Button))
+		g_Config.m_EcFastInputDebug ^= 1;
 }
 
 void CMenus::RenderSettingsElysiumTranslate(CUIRect MainView)
@@ -3285,23 +3357,26 @@ void CMenus::RenderSettingsElysiumTranslate(CUIRect MainView)
 
 void CMenus::RenderSettingsElysiumMisc(CUIRect MainView)
 {
-	CUIRect Button, Label, ApplyButton, ErrorLabel;
+	CUIRect Button, Label, ApplyButton, DisableButton, ErrorLabel;
 
 	CUIRect Resolution;
 	MainView.HSplitTop(90.0f, &Resolution, &MainView);
 	Resolution.HSplitTop(30.0f, &Label, &Resolution);
-	Ui()->DoLabel(&Label, "Custom Resolution", 20.0f, TEXTALIGN_ML);
+	Ui()->DoLabel(&Label, "Custom Aspect Ratio", 20.0f, TEXTALIGN_ML);
 	Resolution.HSplitTop(5.0f, nullptr, &Resolution);
 
 	Resolution.HSplitTop(20.0f, &Button, &Resolution);
-	Button.VSplitRight(80.0f, &Button, &ApplyButton);
+	Button.VSplitRight(70.0f, &Button, &DisableButton);
+	Button.VSplitRight(5.0f, &Button, nullptr);
+	Button.VSplitRight(70.0f, &Button, &ApplyButton);
 	Button.VSplitRight(5.0f, &Button, nullptr);
 
 	static CLineInput s_ResolutionInput(g_Config.m_EcCustomResolution, sizeof(g_Config.m_EcCustomResolution));
-	s_ResolutionInput.SetEmptyText("e.g. 1920x1080");
+	s_ResolutionInput.SetEmptyText("e.g. 4x3 or 1920x1080");
 	Ui()->DoClearableEditBox(&s_ResolutionInput, &Button, 14.0f);
 
 	static CButtonContainer s_ApplyButton;
+	static CButtonContainer s_DisableButton;
 	static char s_aError[64] = "";
 	if(DoButton_Menu(&s_ApplyButton, "Apply", 0, &ApplyButton))
 	{
@@ -3309,21 +3384,24 @@ void CMenus::RenderSettingsElysiumMisc(CUIRect MainView)
 		const char *pX = str_find(s_ResolutionInput.GetString(), "x");
 		const int Width = str_toint_base(s_ResolutionInput.GetString(), 10);
 		const int Height = pX ? str_toint_base(pX + 1, 10) : 0;
-		if(!pX || Width < 100 || Height < 100 || Width > 16384 || Height > 16384)
+		if(!pX || Width <= 0 || Height <= 0)
 		{
-			str_copy(s_aError, "Invalid resolution, use e.g. 1920x1080");
+			str_copy(s_aError, "Invalid ratio, use e.g. 4x3 or 1920x1080");
 		}
 		else
 		{
-			// Resize the window to the target size first, then switch to exclusive
-			// fullscreen - it picks up the window's current size as the display mode
-			// to request, which is what makes the GPU/monitor scale it to fill the
-			// screen instead of just showing a small window.
-			g_Config.m_GfxScreenWidth = Width;
-			g_Config.m_GfxScreenHeight = Height;
-			Graphics()->ResizeToScreen();
-			Graphics()->SetWindowParams(1, false);
+			// Overrides only the aspect ratio used for the camera/FOV calculation - the
+			// window and actual render resolution never change, so this is a pure
+			// "stretched view" effect (like forcing 4:3 on a widescreen monitor), with
+			// no window resize, no display modeset, and none of the risk of actually
+			// changing the render target's pixel size.
+			Graphics()->SetScreenAspectOverride(true, (float)Width / (float)Height);
 		}
+	}
+	if(DoButton_Menu(&s_DisableButton, "Off", 0, &DisableButton))
+	{
+		s_aError[0] = '\0';
+		Graphics()->SetScreenAspectOverride(false, 0.0f);
 	}
 
 	if(s_aError[0])

@@ -52,7 +52,7 @@ void CSmoothTime::UpdateInt(int64_t Target)
 	m_Target = Target;
 }
 
-void CSmoothTime::Update(CGraph *pGraph, int64_t Target, int TimeLeft, EAdjustDirection AdjustDirection)
+void CSmoothTime::Update(CGraph *pGraph, int64_t Target, int TimeLeft, EAdjustDirection AdjustDirection, bool ExtraLagGuard)
 {
 	bool UpdateTimer = true;
 
@@ -68,7 +68,7 @@ void CSmoothTime::Update(CGraph *pGraph, int64_t Target, int TimeLeft, EAdjustDi
 				m_SpikeCounter = 50;
 		}
 
-		if(IsSpike && m_SpikeCounter < 15)
+		if(IsSpike && m_SpikeCounter < (ExtraLagGuard ? 30 : 15))
 		{
 			// ignore this ping spike
 			UpdateTimer = false;

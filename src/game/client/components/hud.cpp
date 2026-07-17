@@ -590,6 +590,46 @@ void CHud::RenderTextInfo()
 	}
 }
 
+// ec_fast_input_debug: small HUD readout of the active mode's tuning and interaction state,
+// ported from AetherClient's debug overlay (used with permission).
+void CHud::RenderFastInputDebug()
+{
+	if(!g_Config.m_EcFastInput || !g_Config.m_EcFastInputDebug)
+		return;
+
+	static const char *s_apModeNames[] = {"Aether+", "Saiko+", "TClient", "Lewn+", "Zeni$h+"};
+	const int Mode = std::clamp(g_Config.m_EcFastInputMode, 0, (int)std::size(s_apModeNames) - 1);
+
+	float MovementOffset = 0.0f, ActionOffset = 0.0f;
+	switch(Mode)
+	{
+	case 1: MovementOffset = ActionOffset = (g_Config.m_EcSaikoAmount * 10 + g_Config.m_EcSaikoAmountFine) / 1000.0f; break;
+	case 2: MovementOffset = ActionOffset = g_Config.m_EcFastInputTClientAmount / 20.0f; break;
+	case 3: MovementOffset = ActionOffset = (g_Config.m_EcLewnAmount * 10 + g_Config.m_EcLewnAmountFine) / 1000.0f; break;
+	case 4:
+		MovementOffset = (g_Config.m_EcZenishAmount * 10 + g_Config.m_EcZenishAmountFine) / 1000.0f;
+		ActionOffset = std::max(1.35f, MovementOffset);
+		break;
+	default:
+		MovementOffset = g_Config.m_EcFastInputMovementAmount / 20.0f;
+		ActionOffset = g_Config.m_EcFastInputActionAmount / 20.0f;
+		break;
+	}
+
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	static const char *s_apInteractionNames[] = {"none", "hooking", "dragged", "freeze-save"};
+	const int InteractionState = (LocalId >= 0 && LocalId < MAX_CLIENTS) ? std::clamp(GameClient()->m_aClients[LocalId].m_FastInteractionState, 0, (int)std::size(s_apInteractionNames) - 1) : 0;
+
+	char aBuf[256];
+	str_format(aBuf, sizeof(aBuf), "Fast Input: %s | move %.0fms | action %.0fms | interaction %s",
+		s_apModeNames[Mode], MovementOffset * 20.0f, ActionOffset * 20.0f, s_apInteractionNames[InteractionState]);
+	TextRender()->Text(5, 96, 6, aBuf, -1.0f);
+
+	str_format(aBuf, sizeof(aBuf), "Lag guard: %s | auto margin: %s | prediction: %dms",
+		g_Config.m_EcFastInputLagGuard ? "on" : "off", g_Config.m_EcFastInputAutoMargin ? "on" : "off", Client()->GetPredictionTime());
+	TextRender()->Text(5, 104, 6, aBuf, -1.0f);
+}
+
 void CHud::RenderConnectionWarning()
 {
 	if(Client()->ConnectionProblems())
@@ -1743,6 +1783,7 @@ void CHud::OnRender()
 		if(Client()->State() != IClient::STATE_DEMOPLAYBACK)
 			RenderConnectionWarning();
 		RenderTeambalanceWarning();
+		RenderFastInputDebug();
 		GameClient()->m_Voting.Render();
 		if(g_Config.m_ClShowRecord)
 			RenderRecord();

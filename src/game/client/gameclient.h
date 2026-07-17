@@ -532,6 +532,14 @@ public:
 		bool m_SpecCharPresent;
 		vec2 m_SpecChar;
 
+		// ec_fast_input render-blend state (per client, so it also works for other tees
+		// when the active mode's "apply to others" setting is on). Ported from
+		// AetherClient's GetFastInputPos, used with permission.
+		bool m_FastRenderPosValid = false;
+		vec2 m_FastRenderPos = vec2(0.0f, 0.0f);
+		float m_FastSaveWindow = 0.0f; // seconds left of boosted follow-rate after a big detected impulse
+		int m_FastInteractionState = 0; // 0=none 1=hooking 2=dragged 3=freeze-save (debug overlay only)
+
 		void UpdateSkinInfo();
 		void UpdateSkin7HatSprite(int Dummy);
 		void UpdateSkin7BotDecoration(int Dummy);
@@ -955,8 +963,13 @@ private:
 
 	vec2 GetSmoothPos(int ClientId);
 	vec2 GetFastInputPos(int ClientId);
-	bool m_FastInputPosValid = false;
-	vec2 m_FastInputPosLast = vec2(0.0f, 0.0f);
+
+	// ec_fast_input brake-priority state (direction-reversal edge detector), per dummy slot
+	int m_aFastInputLastDirection[NUM_DUMMIES] = {};
+	int m_aFastInputBrakeUntilTick[NUM_DUMMIES] = {-1, -1};
+
+	// ec_fast_input: smoothed prediction-time estimate used by ping assist
+	float m_FastInputSmoothedPredictionMs = 0.0f;
 
 	int m_IsDummySwapping;
 	CCharOrder m_CharOrder;

@@ -40,11 +40,11 @@ public:
 	int m_aInputDirectionRight[NUM_DUMMIES];
 	int m_aShowHookColl[NUM_DUMMIES];
 
-	// ec_fast_input: latest (possibly unconfirmed) input snapshot, used to predict a few
-	// extra ticks ahead of the regular boundary. Only tracks the local dummy slot.
-	CNetObj_PlayerInput m_FastInput = {};
-	bool m_FastInputHookAction = false;
-	bool m_FastInputFireAction = false;
+	// ec_fast_input: latest (possibly unconfirmed) input snapshot per dummy slot, used to
+	// predict a few extra ticks ahead of the regular boundary.
+	CNetObj_PlayerInput m_aFastInput[NUM_DUMMIES] = {};
+	bool m_aFastInputHookAction[NUM_DUMMIES] = {};
+	bool m_aFastInputFireAction[NUM_DUMMIES] = {};
 
 	CControls();
 	int Sizeof() const override { return sizeof(*this); }

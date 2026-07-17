@@ -99,10 +99,6 @@ protected:
 	int m_aPredTick[NUM_DUMMIES] = {0, 0};
 	float m_aPredIntraTick[NUM_DUMMIES] = {0.0f, 0.0f};
 
-	// ec_fast_input "Numb Input" mode: timestamp of the last input-triggered repredict,
-	// used to throttle how often a fresh repredict is allowed to fire
-	int64_t m_LastFastInputRepredictTime = 0;
-
 	float m_LocalTime = 0.0f;
 	float m_GlobalTime = 0.0f;
 	float m_RenderFrameTime = 0.0001f;

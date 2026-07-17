@@ -2615,6 +2615,98 @@ void CGameClient::ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld)
 	}
 }
 
+// ec_fast_input mode math, ported from AetherClient (github.com/AetherClientTeam/AetherClient,
+// used with permission). Each mode produces a fractional "how many ticks past the regular
+// prediction boundary to extend" budget, separately for movement (direction/jump) and action
+// (hook/fire/aim/weapon) fields. Modes that don't distinguish the two (Saiko+/TClient/Lewn+)
+// just set both to the same value, which makes AetherComposeFastInput() naturally replace all
+// fields together for their whole overrun range - no separate "wholesale replace" path needed.
+static void FastInputSelfOffsets(float &MovementTicks, float &ActionTicks)
+{
+	switch(g_Config.m_EcFastInputMode)
+	{
+	case 1: // Saiko+
+		MovementTicks = ActionTicks = (g_Config.m_EcSaikoAmount * 10 + g_Config.m_EcSaikoAmountFine) / 1000.0f;
+		break;
+	case 2: // TClient
+		MovementTicks = ActionTicks = g_Config.m_EcFastInputTClientAmount / 20.0f;
+		break;
+	case 3: // Lewn+
+		MovementTicks = ActionTicks = (g_Config.m_EcLewnAmount * 10 + g_Config.m_EcLewnAmountFine) / 1000.0f;
+		break;
+	case 4: // Zeni$h+: hook/fire always predicts at least 1.35 ticks ahead regardless of the
+		// movement slider
+	{
+		const float Base = (g_Config.m_EcZenishAmount * 10 + g_Config.m_EcZenishAmountFine) / 1000.0f;
+		MovementTicks = Base;
+		ActionTicks = std::max(1.35f, Base);
+		break;
+	}
+	default: // 0: Aether+ (adaptive)
+		MovementTicks = std::clamp(g_Config.m_EcFastInputMovementAmount, 0, 50) / 20.0f;
+		ActionTicks = std::clamp(g_Config.m_EcFastInputActionAmount, 0, 50) / 20.0f;
+		break;
+	}
+}
+
+// How far to extend OTHER players' prediction, as a damped fraction of our own movement
+// offset - always <= our own, never equal, since it's a much lower-confidence guess (we know
+// our own future input, we don't know theirs).
+static float FastInputOthersOffset(float SelfMovementTicks)
+{
+	switch(g_Config.m_EcFastInputMode)
+	{
+	case 1: return g_Config.m_EcSaikoOthers ? SelfMovementTicks : 0.0f;
+	case 2: return g_Config.m_EcFastInputTClientOthers ? SelfMovementTicks : 0.0f;
+	case 3: return g_Config.m_EcLewnOthers ? std::min(SelfMovementTicks, std::max(1.35f, SelfMovementTicks * 0.85f)) : 0.0f;
+	case 4: return g_Config.m_EcZenishOthers ? std::min(SelfMovementTicks, std::max(1.35f, SelfMovementTicks * 0.85f)) : 0.0f;
+	default:
+		if(!g_Config.m_EcFastInputAdaptiveOthers)
+			return 0.0f;
+		if(g_Config.m_EcFastInputAdaptiveOthersStyle == 0) // smooth: match our own offset
+			return SelfMovementTicks;
+		return std::min(std::clamp(g_Config.m_EcFastInputAdaptiveOthersAmount, 0, 500) / 100.0f, std::max(1.35f, SelfMovementTicks + 1.0f));
+	}
+}
+
+// Whether the active mode's "apply fast input to other tees" setting is on.
+static bool FastInputOthersEnabled()
+{
+	switch(g_Config.m_EcFastInputMode)
+	{
+	case 1: return g_Config.m_EcSaikoOthers != 0;
+	case 2: return g_Config.m_EcFastInputTClientOthers != 0;
+	case 3: return g_Config.m_EcLewnOthers != 0;
+	case 4: return g_Config.m_EcZenishOthers != 0;
+	default: return g_Config.m_EcFastInputAdaptiveOthers != 0;
+	}
+}
+
+// Splices the fast (unconfirmed) input into the base (confirmed) input field-by-field, so
+// movement and action fields can extend by different tick counts.
+static CNetObj_PlayerInput AetherComposeFastInput(const CNetObj_PlayerInput &BaseInput,
+	const CNetObj_PlayerInput &FastInput, int OverrunTicks, int MovementTicks, int ActionTicks)
+{
+	CNetObj_PlayerInput Result = BaseInput;
+	if(OverrunTicks <= MovementTicks)
+	{
+		Result.m_Direction = FastInput.m_Direction;
+		Result.m_Jump = FastInput.m_Jump;
+		Result.m_PlayerFlags = FastInput.m_PlayerFlags;
+	}
+	if(OverrunTicks <= ActionTicks)
+	{
+		Result.m_Fire = FastInput.m_Fire;
+		Result.m_Hook = FastInput.m_Hook;
+		Result.m_TargetX = FastInput.m_TargetX;
+		Result.m_TargetY = FastInput.m_TargetY;
+		Result.m_WantedWeapon = FastInput.m_WantedWeapon;
+		Result.m_NextWeapon = FastInput.m_NextWeapon;
+		Result.m_PrevWeapon = FastInput.m_PrevWeapon;
+	}
+	return Result;
+}
+
 void CGameClient::OnPredict()
 {
 	// store the previous values so we can detect prediction errors
@@ -2678,12 +2770,47 @@ void CGameClient::OnPredict()
 	int PredictionTick = Client()->GetPredictionTick();
 
 	// ec_fast_input: predict a few extra ticks past the regular boundary using our
-	// latest unconfirmed input, so movement changes show up before the next real tick
-	int FastInputTicks = 0;
+	// latest unconfirmed input, so movement/action changes show up before the next real
+	// tick. Ported from AetherClient's fast input system (used with permission) - see
+	// FastInputSelfOffsets/FastInputOthersOffset/AetherComposeFastInput above.
+	float FastInputMovementOffset = 0.0f, FastInputActionOffset = 0.0f;
 	if(g_Config.m_EcFastInput)
-		FastInputTicks = (g_Config.m_EcFastInputAmount + 19) / 20;
+		FastInputSelfOffsets(FastInputMovementOffset, FastInputActionOffset);
+
+	// Brake priority: on the exact tick our direction reverses (A<->D) or drops to neutral,
+	// force at least ec_fast_input_brake_amount worth of movement-tick coverage, regardless
+	// of what the mode's own movement slider says - quick stops/turns should never be
+	// under-extended just because the general slider is set low. Zeni$h+ always has this on.
+	const bool ZenishMode = g_Config.m_EcFastInputMode == 4;
+	const bool UseBrakePriority = g_Config.m_EcFastInput &&
+		((g_Config.m_EcFastInputMode == 0 && (g_Config.m_EcFastInputBrakePriority || g_Config.m_EcFastInputBrakeReleasePriority)) || ZenishMode);
+	if(UseBrakePriority)
+	{
+		const int BrakeDirection = std::clamp((int)m_Controls.m_aFastInput[g_Config.m_ClDummy].m_Direction, -1, 1);
+		const int PreviousDirection = m_aFastInputLastDirection[g_Config.m_ClDummy];
+		const bool ReverseEdge = PreviousDirection != 0 && BrakeDirection == -PreviousDirection;
+		const bool ReleaseEdge = PreviousDirection != 0 && BrakeDirection == 0;
+		const bool BrakeEdge = ZenishMode
+			? (ReverseEdge || ReleaseEdge)
+			: ((ReverseEdge && g_Config.m_EcFastInputBrakePriority) || (ReleaseEdge && g_Config.m_EcFastInputBrakeReleasePriority));
+		if(BrakeEdge)
+			m_aFastInputBrakeUntilTick[g_Config.m_ClDummy] = Client()->GameTick(g_Config.m_ClDummy) + 1;
+		m_aFastInputLastDirection[g_Config.m_ClDummy] = BrakeDirection;
+		if(Client()->GameTick(g_Config.m_ClDummy) <= m_aFastInputBrakeUntilTick[g_Config.m_ClDummy])
+		{
+			const int BrakeAmountMs = ZenishMode ? 30 : g_Config.m_EcFastInputBrakeAmount;
+			FastInputMovementOffset = std::max(FastInputMovementOffset, BrakeAmountMs / 20.0f);
+		}
+	}
+
+	const int FastInputMovementTicks = (int)std::ceil(FastInputMovementOffset);
+	const int FastInputActionTicks = (int)std::ceil(FastInputActionOffset);
+	const int FastInputSelfTicks = std::max(FastInputMovementTicks, FastInputActionTicks);
+	const int FastInputOtherTicks = g_Config.m_EcFastInput ? (int)std::ceil(FastInputOthersOffset(FastInputMovementOffset)) : 0;
+
 	const int FinalTickRegular = Client()->PredGameTick(g_Config.m_ClDummy);
-	const int FinalTick = FinalTickRegular + FastInputTicks;
+	const int FinalTickSelf = FinalTickRegular + FastInputSelfTicks;
+	const int FinalTick = std::max(FinalTickSelf, FinalTickRegular + FastInputOtherTicks);
 
 	// predict
 	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTick; Tick++)
@@ -2713,16 +2840,40 @@ void CGameClient::OnPredict()
 		const bool FastInputTick = Tick > FinalTickRegular;
 		CNetObj_PlayerInput *pInputData;
 		CNetObj_PlayerInput *pDummyInputData = nullptr;
-		if(FastInputTick)
+		CNetObj_PlayerInput ComposedInput{}, ComposedDummyInput{};
+		if(FastInputTick && Tick <= FinalTickSelf)
 		{
-			// Extra fast-input ticks: extrapolate using our latest unconfirmed input.
-			// The dummy isn't extrapolated here to keep this predictable.
-			pInputData = &m_Controls.m_FastInput;
+			// Extra fast-input ticks within our own budget: splice our latest unconfirmed
+			// input in field-by-field, respecting the mode's separate movement/action
+			// budgets. GetInput() naturally returns the last confirmed input for any tick
+			// beyond what's been sent, so it's a safe base to compose on top of.
+			const int OverrunTicks = Tick - FinalTickRegular;
+
+			const CNetObj_PlayerInput *pBase = (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping);
+			const CNetObj_PlayerInput BaseInput = pBase ? *pBase : m_Controls.m_aFastInput[g_Config.m_ClDummy];
+			ComposedInput = AetherComposeFastInput(BaseInput, m_Controls.m_aFastInput[g_Config.m_ClDummy], OverrunTicks, FastInputMovementTicks, FastInputActionTicks);
+			pInputData = &ComposedInput;
+
+			if(pDummyChar)
+			{
+				const CNetObj_PlayerInput *pDummyBase = (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping ^ 1);
+				const CNetObj_PlayerInput DummyBaseInput = pDummyBase ? *pDummyBase : m_Controls.m_aFastInput[!g_Config.m_ClDummy];
+				ComposedDummyInput = AetherComposeFastInput(DummyBaseInput, m_Controls.m_aFastInput[!g_Config.m_ClDummy], OverrunTicks, FastInputMovementTicks, FastInputActionTicks);
+				pDummyInputData = &ComposedDummyInput;
+			}
 		}
-		else
+		else if(!FastInputTick)
 		{
 			pInputData = (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping);
 			pDummyInputData = !pDummyChar ? nullptr : (CNetObj_PlayerInput *)Client()->GetInput(Tick, m_IsDummySwapping ^ 1);
+		}
+		else
+		{
+			// Past our own fast-input budget but still within the others-extension range:
+			// don't feed the local/dummy tee any new input this tick (they coast on
+			// whatever was last set); only other players keep ticking below via the
+			// shared world Tick() call, on their own last-known real input.
+			pInputData = nullptr;
 		}
 		bool DummyFirst = pInputData && pDummyInputData && pDummyChar->GetCid() < pLocalChar->GetCid();
 
@@ -3858,15 +4009,15 @@ void CGameClient::UpdateRenderedCharacters()
 				vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
 				m_aClients[i].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy));
 
-			// Don't extrapolate while actively hooking (or about to be, per the extrapolated
-			// state itself): the hook state/direction transition is much more sensitive to
-			// misprediction than plain movement, and shows up as the hook visibly firing in
-			// the wrong direction for a moment before snapping to correct. Keep fast input
-			// scoped to free movement, where it works cleanly.
-			if(g_Config.m_EcFastInput && i == m_Snap.m_LocalClientId && pChar->Core()->m_HookState <= HOOK_IDLE)
+			// ec_fast_input: applies to the local tee always (when enabled), and to other
+			// tees when the active mode's "apply to others" setting is on. Hook/drag
+			// interactions are detected and handled *inside* GetFastInputPos (it boosts the
+			// render follow-rate rather than disabling extrapolation outright).
+			const bool ApplyFastInput = g_Config.m_EcFastInput && (i == m_Snap.m_LocalClientId || FastInputOthersEnabled());
+			if(ApplyFastInput)
 				Pos = GetFastInputPos(i);
-			else if(i == m_Snap.m_LocalClientId)
-				m_FastInputPosValid = false; // start fresh (no stale clamp anchor) next time fast input applies again
+			else
+				m_aClients[i].m_FastRenderPosValid = false; // start fresh (no stale anchor) next time fast input applies again
 
 			if(i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy]))
 			{
@@ -3884,7 +4035,7 @@ void CGameClient::UpdateRenderedCharacters()
 				m_aClients[i].m_RenderPrev.m_Angle = m_Snap.m_aCharacters[i].m_Prev.m_Angle;
 				m_aClients[i].m_RenderCur.m_Angle = m_Snap.m_aCharacters[i].m_Cur.m_Angle;
 
-				if(g_Config.m_ClAntiPingSmooth)
+				if(g_Config.m_ClAntiPingSmooth && !ApplyFastInput)
 					Pos = GetSmoothPos(i);
 			}
 		}
@@ -4047,70 +4198,111 @@ vec2 CGameClient::GetSmoothPos(int ClientId)
 	return Pos;
 }
 
-// ec_fast_input: find where the local character ended up in the ring buffer of predicted
-// positions once the extra fast-input ticks (see OnPredict) are accounted for, and blend
-// towards it based on how far past the regular predicted tick we currently are.
+// ec_fast_input: find where a character ended up in the ring buffer of predicted positions
+// once the extra fast-input ticks (see OnPredict) are accounted for, and blend the rendered
+// position towards it. Ported from AetherClient's GetFastInputPos (used with permission):
+// an exponential "follow" smoother whose rate adapts to how wrong the last frame's guess
+// turned out to be, plus a hard distance-snap fallback and hook/drag/freeze interaction
+// detection that temporarily boosts the follow rate instead of disabling extrapolation.
 vec2 CGameClient::GetFastInputPos(int ClientId)
 {
+	const bool IsLocal = ClientId == m_Snap.m_LocalClientId;
 	const float PredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
 	const int PredTick = Client()->PredGameTick(g_Config.m_ClDummy);
 
 	vec2 Pos = mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, PredIntraTick);
-	const vec2 RegularPos = Pos; // baseline, not touched by the extra fast-input ticks below
 
-	const float FastInputIntra = (g_Config.m_EcFastInputAmount % 20) / 20.0f;
-	int FastInputTicks = g_Config.m_EcFastInputAmount / 20;
+	float MovementOffset = 0.0f, ActionOffset = 0.0f;
+	FastInputSelfOffsets(MovementOffset, ActionOffset);
+	const float EffectiveOffset = IsLocal ? std::max(MovementOffset, ActionOffset) : FastInputOthersOffset(MovementOffset);
 
-	// Combine the regular sub-tick position with the extra fast-input ticks into one
-	// continuous position along the ring buffer, carrying over into an extra whole tick
-	// if the fractional parts add up past 1.0
-	const float CombinedIntra = PredIntraTick + FastInputIntra;
+	const float CombinedIntra = PredIntraTick + EffectiveOffset;
 	float IntraWholePart = 0.0f;
 	const float FinalIntra = std::modf(CombinedIntra, &IntraWholePart);
-	FastInputTicks += static_cast<int>(IntraWholePart);
-
-	const int FinalTick = PredTick + FastInputTicks;
+	const int FinalTick = PredTick + (int)IntraWholePart;
+	const int TicksBound = (int)std::ceil(EffectiveOffset);
 
 	if(FinalTick > 0 &&
 		m_aClients[ClientId].m_aPredTick[(FinalTick - 1) % 200] >= Client()->PrevGameTick(g_Config.m_ClDummy) &&
-		m_aClients[ClientId].m_aPredTick[FinalTick % 200] <= PredTick + (g_Config.m_EcFastInputAmount + 19) / 20)
+		m_aClients[ClientId].m_aPredTick[FinalTick % 200] <= PredTick + TicksBound)
 	{
 		Pos = mix(m_aClients[ClientId].m_aPredPos[(FinalTick - 1) % 200], m_aClients[ClientId].m_aPredPos[FinalTick % 200], FinalIntra);
 	}
 
-	// If the regular (confirmed, non-extrapolated) position itself just jumped a lot since
-	// the last frame we rendered, that's a teleport/respawn/freeze reset, not a
-	// misprediction - let the extrapolated result through untouched and reset the clamp
-	// anchor, rather than fighting a legitimate large position change.
-	if(!m_FastInputPosValid || distance(RegularPos, m_FastInputPosLast) > 200.0f)
+	// Saiko+ and TClient mode render the raw sampled tick directly, no smoothing - that's
+	// what makes them feel "sharper"/more direct than the other modes.
+	const int Mode = g_Config.m_EcFastInputMode;
+	if(Mode == 1 || Mode == 2)
 	{
-		m_FastInputPosLast = Pos;
-		m_FastInputPosValid = true;
+		m_aClients[ClientId].m_FastRenderPosValid = false;
 		return Pos;
 	}
 
-	// Clamp any frame-to-frame jump in the extrapolated output to a generous multiple of
-	// the character's own recently observed speed (measured directly from the ring buffer,
-	// so it naturally scales with speedup tiles/hook momentum instead of using a fixed cap
-	// that would fight those). A jump bigger than that can only be a misprediction
-	// correction snapping in, never real movement - so clamping it can't affect legitimate
-	// motion, only spread the visible snap smoothly over a couple frames instead of one.
+	const bool LewnMode = Mode == 3;
+	const bool ZenishMode = Mode == 4;
+	const int SharpnessConfig = LewnMode ? g_Config.m_EcLewnCorrection : ZenishMode ? g_Config.m_EcZenishCorrection : g_Config.m_EcFastInputSmoothCorrections;
+	const float Sharpness = std::clamp(SharpnessConfig / 100.0f, 0.0f, 1.0f);
+	const float Stability = (!LewnMode && !ZenishMode) ? std::clamp((82.0f - SharpnessConfig / 2.0f) / 100.0f, 0.20f, 0.90f) : 0.0f;
+	const float InteractionStrength = LewnMode ? 0.5f : ZenishMode ? 0.24f : 0.72f;
+
+	CClientData &ClientData = m_aClients[ClientId];
+	const float Dt = std::clamp(Client()->RenderFrameTime(), 0.0001f, 0.1f);
+	const float Error = ClientData.m_FastRenderPosValid ? distance(ClientData.m_FastRenderPos, Pos) : 0.0f;
+
+	// Detect hook interactions: are we hooking someone, or is someone hooking/dragging us?
+	CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId);
+	bool Hooking = pChar && pChar->Core()->m_HookState == HOOK_GRABBED && pChar->Core()->HookedPlayer() >= 0;
+	bool Dragged = false;
+	for(int j = 0; !Hooking && !Dragged && j < MAX_CLIENTS; j++)
 	{
-		const vec2 RecentPrev = m_aClients[ClientId].m_aPredPos[(PredTick - 1) % 200];
-		const vec2 RecentCur = m_aClients[ClientId].m_aPredPos[PredTick % 200];
-		const float RecentSpeedPerSec = distance(RecentPrev, RecentCur) * 50.0f; // one tick = 1/50s
-		const float DtSeconds = std::clamp(Client()->RenderFrameTime(), 0.0001f, 0.1f);
-		const float MaxDelta = std::max(RecentSpeedPerSec, 200.0f) * DtSeconds * 3.0f;
-
-		const vec2 Delta = Pos - m_FastInputPosLast;
-		const float DeltaLen = length(Delta);
-		if(DeltaLen > MaxDelta && DeltaLen > 0.0001f)
-			Pos = m_FastInputPosLast + Delta * (MaxDelta / DeltaLen);
+		CCharacter *pOther = j == ClientId ? nullptr : m_PredictedWorld.GetCharacterById(j);
+		if(pOther && pOther->Core()->m_HookState == HOOK_GRABBED && pOther->Core()->HookedPlayer() == ClientId)
+			Dragged = true;
 	}
-	m_FastInputPosLast = Pos;
-	m_FastInputPosValid = true;
 
-	return Pos;
+	// "Freeze save window": briefly boost the follow rate after a big sudden position jump
+	// (unfreezing, a hammer-like impulse, or a big hook/drag mismatch), so those corrections
+	// resolve fast instead of visibly gliding into place.
+	const bool BigImpulse = Error > 180.0f;
+	ClientData.m_FastInteractionState = 0;
+	if(Hooking || Dragged || BigImpulse)
+	{
+		ClientData.m_FastSaveWindow = std::max(ClientData.m_FastSaveWindow, mix(0.24f, 0.58f, InteractionStrength));
+		ClientData.m_FastInteractionState = Hooking ? 1 : Dragged ? 2 : 3;
+	}
+	else
+	{
+		ClientData.m_FastSaveWindow = std::max(0.0f, ClientData.m_FastSaveWindow - Dt);
+	}
+
+	const float SnapThreshold = mix(96.0f, 160.0f, Stability);
+	const bool Snap = !ClientData.m_FastRenderPosValid || Error > SnapThreshold;
+	if(Snap)
+	{
+		ClientData.m_FastRenderPos = Pos;
+	}
+	else
+	{
+		float Follow = mix(0.16f, 0.10f, Stability) + Sharpness * mix(0.74f, 0.50f, Stability) +
+				std::clamp(Error / mix(140.0f, 240.0f, Stability), 0.0f, mix(0.32f, 0.18f, Stability));
+
+		if(IsLocal && g_Config.m_EcFastInputPingAssist)
+		{
+			const float PredictionMs = (float)Client()->GetPredictionTime();
+			m_FastInputSmoothedPredictionMs = mix(m_FastInputSmoothedPredictionMs, PredictionMs, 1.0f - std::pow(0.001f, Dt / 1.25f));
+			const float PingNorm = std::clamp((m_FastInputSmoothedPredictionMs - 35.0f) / 165.0f, 0.0f, 1.0f);
+			Follow += mix(0.06f, -0.10f, PingNorm);
+		}
+
+		if(ClientData.m_FastSaveWindow > 0.0f)
+			Follow = std::max(Follow, 0.48f + 0.3f * InteractionStrength);
+
+		Follow = std::clamp(Follow, 0.05f, 1.0f);
+		ClientData.m_FastRenderPos = mix(ClientData.m_FastRenderPos, Pos, Follow);
+	}
+	ClientData.m_FastRenderPosValid = true;
+
+	return ClientData.m_FastRenderPos;
 }
 
 void CGameClient::Echo(const char *pString)

@@ -256,8 +256,8 @@ int CControls::SnapInput(int *pData)
 
 		// ec_fast_input: this is a real (confirmed) input tick, so any hook/fire action
 		// starting from here on is no longer the "first speculative tick" - reset the guards
-		m_FastInputHookAction = false;
-		m_FastInputFireAction = false;
+		m_aFastInputHookAction[g_Config.m_ClDummy] = false;
+		m_aFastInputFireAction[g_Config.m_ClDummy] = false;
 
 		// set direction
 		m_aInputData[g_Config.m_ClDummy].m_Direction = 0;
@@ -344,70 +344,71 @@ int CControls::SnapInput(int *pData)
 	return sizeof(m_aInputData[0]);
 }
 
-// ec_fast_input: compares the current live input state against the last captured
-// snapshot. Returns true (and updates the snapshot) if anything meaningful changed,
-// so the caller knows to repredict immediately instead of waiting for the next tick.
+// ec_fast_input: compares the current live input state (for both dummy slots) against
+// the last captured snapshot. Returns true (and updates the snapshots) if anything
+// meaningful changed on either slot, so the caller knows to repredict immediately
+// instead of waiting for the next tick. Ported from AetherClient's CheckNewInput().
 bool CControls::CheckNewInput()
 {
-	CNetObj_PlayerInput TestInput = m_aInputData[g_Config.m_ClDummy];
-	TestInput.m_Direction = 0;
-	if(m_aInputDirectionLeft[g_Config.m_ClDummy] && !m_aInputDirectionRight[g_Config.m_ClDummy])
-		TestInput.m_Direction = -1;
-	if(!m_aInputDirectionLeft[g_Config.m_ClDummy] && m_aInputDirectionRight[g_Config.m_ClDummy])
-		TestInput.m_Direction = 1;
-
-	// Note: aim (TargetX/TargetY) is intentionally excluded from the change-detection
-	// below. The mouse moves almost every frame, and repredicting the whole extrapolated
-	// trajectory on every single mouse move causes visible jitter. Only discrete input
-	// changes should trigger a repredict.
 	bool Changed = false;
-	if(m_FastInput.m_Direction != TestInput.m_Direction)
-		Changed = true;
-	if(m_FastInput.m_Hook != TestInput.m_Hook)
-		Changed = true;
-	if(m_FastInput.m_Fire != TestInput.m_Fire)
-		Changed = true;
-	if(m_FastInput.m_Jump != TestInput.m_Jump)
-		Changed = true;
-	if(m_FastInput.m_NextWeapon != TestInput.m_NextWeapon)
-		Changed = true;
-	if(m_FastInput.m_PrevWeapon != TestInput.m_PrevWeapon)
-		Changed = true;
-	if(m_FastInput.m_WantedWeapon != TestInput.m_WantedWeapon)
-		Changed = true;
+	for(int Dummy = 0; Dummy < NUM_DUMMIES; Dummy++)
+	{
+		CNetObj_PlayerInput TestInput = m_aInputData[Dummy];
+		TestInput.m_Direction = 0;
+		if(m_aInputDirectionLeft[Dummy] && !m_aInputDirectionRight[Dummy])
+			TestInput.m_Direction = -1;
+		if(!m_aInputDirectionLeft[Dummy] && m_aInputDirectionRight[Dummy])
+			TestInput.m_Direction = 1;
 
-	// Be careful about the aim target on the tick a hook/fire action first starts: we
-	// don't yet know what target actually got sent to the server for it, so keep
-	// predicting with the last confirmed target until the real tick catches up.
-	// "Maik Input" skips this safety net entirely and always trusts the live aim -
-	// that's its whole point (more responsive, at the cost of more misprediction risk
-	// specifically on the tick a hook/fire action starts).
-	bool SetMousePos = g_Config.m_EcFastInputMode == 1;
-	if(m_FastInput.m_Hook == 0 && TestInput.m_Hook == 1)
-	{
-		m_FastInputHookAction = true;
-		SetMousePos = true;
-	}
-	if(m_FastInput.m_Fire != TestInput.m_Fire && TestInput.m_Fire % 2 == 1)
-	{
-		m_FastInputFireAction = true;
-		SetMousePos = true;
-	}
-	if(!m_FastInputHookAction && !m_FastInputFireAction)
-		SetMousePos = true;
+		// Note: aim (TargetX/TargetY) is intentionally excluded from the change-detection
+		// below. The mouse moves almost every frame, and repredicting the whole extrapolated
+		// trajectory on every single mouse move causes visible jitter. Only discrete input
+		// changes should trigger a repredict.
+		if(m_aFastInput[Dummy].m_Direction != TestInput.m_Direction)
+			Changed = true;
+		if(m_aFastInput[Dummy].m_Hook != TestInput.m_Hook)
+			Changed = true;
+		if(m_aFastInput[Dummy].m_Fire != TestInput.m_Fire)
+			Changed = true;
+		if(m_aFastInput[Dummy].m_Jump != TestInput.m_Jump)
+			Changed = true;
+		if(m_aFastInput[Dummy].m_NextWeapon != TestInput.m_NextWeapon)
+			Changed = true;
+		if(m_aFastInput[Dummy].m_PrevWeapon != TestInput.m_PrevWeapon)
+			Changed = true;
+		if(m_aFastInput[Dummy].m_WantedWeapon != TestInput.m_WantedWeapon)
+			Changed = true;
 
-	if(SetMousePos)
-	{
-		TestInput.m_TargetX = (int)m_aMousePos[g_Config.m_ClDummy].x;
-		TestInput.m_TargetY = (int)m_aMousePos[g_Config.m_ClDummy].y;
-	}
-	else
-	{
-		TestInput.m_TargetX = m_FastInput.m_TargetX;
-		TestInput.m_TargetY = m_FastInput.m_TargetY;
-	}
+		// Be careful about the aim target on the tick a hook/fire action first starts: we
+		// don't yet know what target actually got sent to the server for it, so keep
+		// predicting with the last confirmed target until the real tick catches up.
+		bool SetMousePos = false;
+		if(m_aFastInput[Dummy].m_Hook == 0 && TestInput.m_Hook == 1)
+		{
+			m_aFastInputHookAction[Dummy] = true;
+			SetMousePos = true;
+		}
+		if(m_aFastInput[Dummy].m_Fire != TestInput.m_Fire && TestInput.m_Fire % 2 == 1)
+		{
+			m_aFastInputFireAction[Dummy] = true;
+			SetMousePos = true;
+		}
+		if(!m_aFastInputHookAction[Dummy] && !m_aFastInputFireAction[Dummy])
+			SetMousePos = true;
 
-	m_FastInput = TestInput;
+		if(SetMousePos)
+		{
+			TestInput.m_TargetX = (int)m_aMousePos[Dummy].x;
+			TestInput.m_TargetY = (int)m_aMousePos[Dummy].y;
+		}
+		else
+		{
+			TestInput.m_TargetX = m_aFastInput[Dummy].m_TargetX;
+			TestInput.m_TargetY = m_aFastInput[Dummy].m_TargetY;
+		}
+
+		m_aFastInput[Dummy] = TestInput;
+	}
 	return Changed;
 }
 

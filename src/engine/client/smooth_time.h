@@ -34,7 +34,9 @@ public:
 	int64_t Get(int64_t Now) const;
 
 	void UpdateInt(int64_t Target);
-	void Update(CGraph *pGraph, int64_t Target, int TimeLeft, EAdjustDirection AdjustDirection);
+	// ExtraLagGuard (ec_fast_input_lag_guard) raises the ping-spike-ignore threshold, so a
+	// single network hiccup is less likely to cause a visible fast-input jump.
+	void Update(CGraph *pGraph, int64_t Target, int TimeLeft, EAdjustDirection AdjustDirection, bool ExtraLagGuard = false);
 
 	void UpdateMargin(int64_t Margin);
 };

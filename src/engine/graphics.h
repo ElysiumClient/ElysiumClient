@@ -192,6 +192,9 @@ protected:
 	float m_ScreenHiDPIScale;
 	ivec2 m_DesktopSize;
 
+	bool m_ScreenAspectOverrideEnabled = false;
+	float m_ScreenAspectOverride = 0.0f;
+
 public:
 	enum
 	{
@@ -219,7 +222,18 @@ public:
 
 	int ScreenWidth() const { return m_ScreenWidth; }
 	int ScreenHeight() const { return m_ScreenHeight; }
-	float ScreenAspect() const { return (float)ScreenWidth() / (float)ScreenHeight(); }
+	// ec_custom_resolution: overrides just the aspect ratio used for the camera/FOV
+	// calculation (MapScreenToWorld etc.) without touching actual pixel dimensions
+	// anywhere - the window, viewport, and every ScreenWidth()/ScreenHeight() consumer
+	// (UI layout, tile culling, mouse mapping) stay completely untouched. This gives a
+	// stretched-view effect (like forcing 4:3 on a widescreen monitor) with none of the
+	// risk of actually changing the render target's pixel size.
+	float ScreenAspect() const { return m_ScreenAspectOverrideEnabled && m_ScreenAspectOverride > 0.0f ? m_ScreenAspectOverride : (float)ScreenWidth() / (float)ScreenHeight(); }
+	void SetScreenAspectOverride(bool Enabled, float Aspect)
+	{
+		m_ScreenAspectOverrideEnabled = Enabled;
+		m_ScreenAspectOverride = Aspect;
+	}
 	float ScreenHiDPIScale() const { return m_ScreenHiDPIScale; }
 	int WindowWidth() const { return m_ScreenWidth / m_ScreenHiDPIScale; }
 	int WindowHeight() const { return m_ScreenHeight / m_ScreenHiDPIScale; }

@@ -273,6 +273,7 @@ void CBinds::SetDefaults()
 	Bind(KEY_TAB, "+scoreboard");
 	Bind(KEY_EQUALS, "+statboard");
 	Bind(KEY_F10, "screenshot");
+	Bind(KEY_F12, "screenshot");
 
 	Bind(KEY_A, "+left");
 	Bind(KEY_D, "+right");
